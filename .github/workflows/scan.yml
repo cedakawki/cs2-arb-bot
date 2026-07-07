@@ -33,7 +33,7 @@ jobs:
           MIN_MARKUP_PCT: '0'
           MAX_MARKUP_PCT: '8'
           MIN_STEAM_PRICE: '5'
-          MAX_ITEMS_PER_RUN: '40'
+          MAX_ITEMS_PER_RUN: '35'
         run: node index.js
 
       - name: state.json'ı repoya geri kaydet
