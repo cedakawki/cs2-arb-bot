@@ -121,7 +121,7 @@ async function scanOnce() {
 
     const steamPrice = await fetchSteamPrice(name);
     checked++;
-    await sleep(3000);
+    await sleep(2000);
 
     if (!steamPrice || steamPrice < minSteamPrice) continue;
 
