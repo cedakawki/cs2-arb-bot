@@ -1,20 +1,3 @@
-/**
- * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM
- * --------------------------------------------
- * - Steam Community Market'in HERKESE AÇIK, KEY GEREKTİRMEYEN fiyat API'sini kullanır
- *   (steamcommunity.com/market/priceoverview). Bu yüzden Pricempire'a gerek yok.
- * - CSFloat'ın ücretsiz API key'i ile aktif buy_now listing'lerini çeker.
- * - markup% = (csfloat_price - steam_price) / steam_price * 100
- *   Bu senin "CSFloat'ta en fazla %7-8 şişen" kriterin.
- * - GitHub Actions üzerinde zamanlanmış (cron) olarak, HER SEFERİNDE BİR KERE
- *   çalışıp kapanacak şekilde tasarlandı (sürekli açık sunucu YOK, tamamen ücretsiz).
- * - Aynı fırsatı tekrar tekrar bildirmemek için state.json dosyasına
- *   son görülen listing id'lerini yazar; workflow bu dosyayı repo'ya geri commit'ler.
- *
- * ÖNEMLİ: Bu script SADECE TARAR ve Telegram'a bildirim atar.
- * Otomatik alım/satım YAPMAZ.
- */
-
 const fs = require('fs');
 const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
@@ -26,7 +9,7 @@ const {
   MIN_MARKUP_PCT = '0',
   MAX_MARKUP_PCT = '8',
   MIN_STEAM_PRICE = '5',
-  MAX_ITEMS_PER_RUN = '40', // Steam rate-limitine takılmamak için bir çalıştırmada en fazla bu kadar item sorgulanır
+  MAX_ITEMS_PER_RUN = '25',
 } = process.env;
 
 const STATE_FILE = path.join(__dirname, 'state.json');
@@ -40,7 +23,6 @@ function loadState() {
 }
 
 function saveState(state) {
-  // en fazla son 3000 kaydı tut, dosya şişmesin
   const trimmed = state.seen.slice(-3000);
   fs.writeFileSync(STATE_FILE, JSON.stringify({ seen: trimmed }, null, 2));
 }
@@ -52,7 +34,7 @@ async function tgSend(text) {
   }
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -62,8 +44,14 @@ async function tgSend(text) {
         disable_web_page_preview: true,
       }),
     });
+    const body = await res.text();
+    if (!res.ok) {
+      console.error('Telegram HATA:', res.status, body);
+    } else {
+      console.log('Telegram mesajı GÖNDERİLDİ.');
+    }
   } catch (e) {
-    console.error('Telegram gönderim hatası:', e.message);
+    console.error('Telegram gönderim hatası (network):', e.message);
   }
 }
 
@@ -83,14 +71,17 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Steam'in herkese açık, key gerektirmeyen fiyat endpoint'i.
-// Rate limit'e takılmamak için çağrılar arasında bekleme koyuyoruz.
-async function fetchSteamPrice(marketHashName) {
+async function fetchSteamPrice(marketHashName, retry = true) {
   const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encodeURIComponent(
     marketHashName
   )}`;
   const res = await fetch(url);
   if (res.status === 429) {
+    if (retry) {
+      console.warn('Rate limit, 8sn bekleyip tekrar deneniyor:', marketHashName);
+      await sleep(8000);
+      return fetchSteamPrice(marketHashName, false);
+    }
     console.warn('Steam rate limit — bu item atlanıyor:', marketHashName);
     return null;
   }
@@ -103,6 +94,8 @@ async function fetchSteamPrice(marketHashName) {
 
 async function scanOnce() {
   console.log(`[${new Date().toISOString()}] Tarama başlıyor...`);
+  await tgSend('✅ Bot çalışıyor, tarama başladı.');
+
   const state = loadState();
   const seenSet = new Set(state.seen);
 
@@ -128,7 +121,7 @@ async function scanOnce() {
 
     const steamPrice = await fetchSteamPrice(name);
     checked++;
-    await sleep(1500); // Steam'i yormamak için her sorgu arası bekleme
+    await sleep(3000);
 
     if (!steamPrice || steamPrice < minSteamPrice) continue;
 
