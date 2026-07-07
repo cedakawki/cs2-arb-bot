@@ -2,7 +2,7 @@ name: CS2 Arbitraj Tarayıcı
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
 permissions:
