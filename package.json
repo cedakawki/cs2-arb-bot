@@ -1,0 +1,16 @@
+{
+  "name": "cs2-arb-bot-free",
+  "version": "1.0.0",
+  "description": "CS2 skin arbitraj firsat tarayici - ucretsiz surum (Steam public API + CSFloat + GitHub Actions + Telegram)",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
