@@ -165,7 +165,10 @@ async function scanOnce() {
     }
     const { price: steamPrice, volume } = steamData;
 
-    if (steamPrice < minSteamPrice) continue;
+    if (steamPrice < minSteamPrice) {
+      console.log(`  ${name} | Steam $${steamPrice.toFixed(2)} < $${minSteamPrice} eşiği, ELENDİ (fiyat)`);
+      continue;
+    }
     if (volume < minVolume) {
       console.log(`  ${name} | Steam $${steamPrice.toFixed(2)} | hacim ${volume} < ${minVolume}, ELENDİ (likidite)`);
       continue;
