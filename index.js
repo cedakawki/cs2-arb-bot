@@ -1,3 +1,21 @@
+/**
+ * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM
+ * --------------------------------------------
+ * - Steam Community Market'in HERKESE AÇIK, KEY GEREKTİRMEYEN fiyat API'sini kullanır
+ *   (steamcommunity.com/market/priceoverview). Aynı endpoint hem fiyatı hem de
+ *   son 24 saatteki satış hacmini (likidite göstergesi) verir.
+ * - CSFloat'ın ücretsiz API key'i ile aktif buy_now listing'lerini çeker.
+ * - markup% = (csfloat_price - steam_price) / steam_price * 100
+ *   Negatif değer = CSFloat, Steam'den daha ucuz (senin "ROI -%10/-15" kriterin).
+ *   Pozitif değer = CSFloat, Steam'den daha pahalı.
+ * - MIN_VOLUME ile Steam'de günde en az X kere satılmayan (likit olmayan) itemler elenir.
+ * - GitHub Actions üzerinde zamanlanmış (cron) olarak, HER SEFERİNDE BİR KERE
+ *   çalışıp kapanacak şekilde tasarlandı.
+ *
+ * ÖNEMLİ: Bu script SADECE TARAR ve Telegram'a bildirim atar.
+ * Otomatik alım/satım YAPMAZ.
+ */
+
 const fs = require('fs');
 const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
@@ -6,10 +24,11 @@ const {
   CSFLOAT_API_KEY,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID,
-  MIN_MARKUP_PCT = '0',
-  MAX_MARKUP_PCT = '8',
-  MIN_STEAM_PRICE = '5',
-  MAX_ITEMS_PER_RUN = '25',
+  MIN_MARKUP_PCT = '-15',
+  MAX_MARKUP_PCT = '-10',
+  MIN_STEAM_PRICE = '0.5',
+  MIN_VOLUME = '20',
+  MAX_ITEMS_PER_RUN = '35',
 } = process.env;
 
 const STATE_FILE = path.join(__dirname, 'state.json');
@@ -56,7 +75,8 @@ async function tgSend(text) {
 }
 
 async function fetchCsfloatListings() {
-  const url = `https://csfloat.com/api/v1/listings?sort_by=lowest_price&limit=50`;
+  const minPriceCents = Math.round(parseFloat(MIN_STEAM_PRICE || '0.5') * 100);
+  const url = `https://csfloat.com/api/v1/listings?sort_by=lowest_price&limit=50&min_price=${minPriceCents}`;
   const res = await fetch(url, {
     headers: { Authorization: CSFLOAT_API_KEY },
   });
@@ -88,8 +108,10 @@ async function fetchSteamPrice(marketHashName, retry = true) {
   if (!res.ok) return null;
   const data = await res.json();
   if (!data.success || !data.lowest_price) return null;
-  const num = parseFloat(data.lowest_price.replace(/[^0-9.,]/g, '').replace(',', '.'));
-  return isNaN(num) ? null : num;
+  const price = parseFloat(data.lowest_price.replace(/[^0-9.,]/g, '').replace(',', '.'));
+  const volume = data.volume ? parseInt(String(data.volume).replace(/,/g, ''), 10) : 0;
+  if (isNaN(price)) return null;
+  return { price, volume: isNaN(volume) ? 0 : volume };
 }
 
 async function scanOnce() {
@@ -102,6 +124,7 @@ async function scanOnce() {
   const minMarkup = parseFloat(MIN_MARKUP_PCT);
   const maxMarkup = parseFloat(MAX_MARKUP_PCT);
   const minSteamPrice = parseFloat(MIN_STEAM_PRICE);
+  const minVolume = parseFloat(MIN_VOLUME);
   const maxItems = parseInt(MAX_ITEMS_PER_RUN, 10);
 
   const listings = await fetchCsfloatListings();
@@ -119,11 +142,15 @@ async function scanOnce() {
     const key = `${name}-${listing.id}`;
     if (seenSet.has(key)) continue;
 
-    const steamPrice = await fetchSteamPrice(name);
+    const steamData = await fetchSteamPrice(name);
     checked++;
     await sleep(2000);
 
-    if (!steamPrice || steamPrice < minSteamPrice) continue;
+    if (!steamData) continue;
+    const { price: steamPrice, volume } = steamData;
+
+    if (steamPrice < minSteamPrice) continue;
+    if (volume < minVolume) continue; // likit değil, atla
 
     const csfloatPrice = listing.price / 100;
     const markupPct = ((csfloatPrice - steamPrice) / steamPrice) * 100;
@@ -136,7 +163,7 @@ async function scanOnce() {
         `🎯 <b>Fırsat bulundu</b>\n` +
         `<b>${name}</b>\n` +
         `CSFloat: $${csfloatPrice.toFixed(2)} (markup: ${markupPct.toFixed(1)}%)\n` +
-        `Steam: $${steamPrice.toFixed(2)}\n` +
+        `Steam: $${steamPrice.toFixed(2)} (günlük satış: ${volume})\n` +
         `Link: https://csfloat.com/item/${listing.id}`;
 
       await tgSend(msg);
