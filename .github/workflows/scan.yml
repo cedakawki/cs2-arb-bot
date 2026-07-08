@@ -30,7 +30,7 @@ jobs:
           CSFLOAT_API_KEY: ${{ secrets.CSFLOAT_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MIN_MARKUP_PCT: '-15'
+          MIN_MARKUP_PCT: '-20'
           MAX_MARKUP_PCT: '-10'
           MIN_STEAM_PRICE: '0.5'
           MIN_VOLUME: '20'
