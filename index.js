@@ -1,4 +1,4 @@
-/**
+  /**
  * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM
  * --------------------------------------------
  * - Steam Community Market'in HERKESE AÇIK, KEY GEREKTİRMEYEN fiyat API'sini kullanır
@@ -7,10 +7,12 @@
  * - CSFloat'ın ücretsiz API key'i ile aktif buy_now listing'lerini çeker.
  * - markup% = (csfloat_price - steam_price) / steam_price * 100
  *   Negatif değer = CSFloat, Steam'den daha ucuz (senin "ROI -%10/-15" kriterin).
- *   Pozitif değer = CSFloat, Steam'den daha pahalı.
+ *   Pozitif değer = CSFloat, Steam'den daha pahalı (senin "en fazla %7-8 şişen" kriterin).
  * - MIN_VOLUME ile Steam'de günde en az X kere satılmayan (likit olmayan) itemler elenir.
  * - GitHub Actions üzerinde zamanlanmış (cron) olarak, HER SEFERİNDE BİR KERE
- *   çalışıp kapanacak şekilde tasarlandı.
+ *   çalışıp kapanacak şekilde tasarlandı (sürekli açık sunucu YOK, tamamen ücretsiz).
+ * - Aynı fırsatı tekrar tekrar bildirmemek için state.json dosyasına
+ *   son görülen listing id'lerini yazar; workflow bu dosyayı repo'ya geri commit'ler.
  *
  * ÖNEMLİ: Bu script SADECE TARAR ve Telegram'a bildirim atar.
  * Otomatik alım/satım YAPMAZ.
@@ -91,6 +93,7 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Steam'in herkese açık, key gerektirmeyen fiyat+hacim endpoint'i.
 async function fetchSteamPrice(marketHashName, retry = true) {
   const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encodeURIComponent(
     marketHashName
@@ -150,10 +153,17 @@ async function scanOnce() {
     const { price: steamPrice, volume } = steamData;
 
     if (steamPrice < minSteamPrice) continue;
-    if (volume < minVolume) continue; // likit değil, atla
+    if (volume < minVolume) {
+      console.log(`  ${name} | Steam $${steamPrice.toFixed(2)} | hacim ${volume} < ${minVolume}, ELENDİ (likidite)`);
+      continue;
+    }
 
     const csfloatPrice = listing.price / 100;
     const markupPct = ((csfloatPrice - steamPrice) / steamPrice) * 100;
+
+    console.log(
+      `  ${name} | CSFloat $${csfloatPrice.toFixed(2)} | Steam $${steamPrice.toFixed(2)} | markup ${markupPct.toFixed(1)}% | hacim ${volume}`
+    );
 
     if (markupPct >= minMarkup && markupPct <= maxMarkup) {
       hits++;
