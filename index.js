@@ -137,6 +137,7 @@ async function scanOnce() {
   let checked = 0;
   let hits = 0;
   let rateLimited = 0;
+  const priceCache = new Map(); // aynı item ismi için Steam'e tekrar sormamak için
 
   for (const listing of listings) {
     if (checked >= maxItems) break;
@@ -147,9 +148,15 @@ async function scanOnce() {
     const key = `${name}-${listing.id}`;
     if (seenSet.has(key)) continue;
 
-    const steamData = await fetchSteamPrice(name);
-    checked++;
-    await sleep(4000);
+    let steamData;
+    if (priceCache.has(name)) {
+      steamData = priceCache.get(name);
+    } else {
+      steamData = await fetchSteamPrice(name);
+      priceCache.set(name, steamData);
+      checked++;
+      await sleep(4000);
+    }
 
     if (!steamData) {
       console.log(`  ${name} | Steam verisi alınamadı (rate limit/hata)`);
