@@ -136,6 +136,7 @@ async function scanOnce() {
 
   let checked = 0;
   let hits = 0;
+  let rateLimited = 0;
 
   for (const listing of listings) {
     if (checked >= maxItems) break;
@@ -150,7 +151,11 @@ async function scanOnce() {
     checked++;
     await sleep(4000);
 
-    if (!steamData) continue;
+    if (!steamData) {
+      console.log(`  ${name} | Steam verisi alınamadı (rate limit/hata)`);
+      rateLimited++;
+      continue;
+    }
     const { price: steamPrice, volume } = steamData;
 
     if (steamPrice < minSteamPrice) continue;
@@ -184,7 +189,7 @@ async function scanOnce() {
   state.seen = Array.from(seenSet);
   saveState(state);
 
-  console.log(`Tarama bitti. ${checked} item kontrol edildi, ${hits} yeni fırsat bulundu.`);
+  console.log(`Tarama bitti. ${checked} item kontrol edildi, ${rateLimited} rate limit'e takıldı, ${hits} yeni fırsat bulundu.`);
 }
 
 scanOnce().catch(async (e) => {
