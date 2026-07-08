@@ -1,4 +1,4 @@
-  /**
+/**
  * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM
  * --------------------------------------------
  * - Steam Community Market'in HERKESE AÇIK, KEY GEREKTİRMEYEN fiyat API'sini kullanır
@@ -30,7 +30,7 @@ const {
   MAX_MARKUP_PCT = '-10',
   MIN_STEAM_PRICE = '0.5',
   MIN_VOLUME = '20',
-  MAX_ITEMS_PER_RUN = '35',
+  MAX_ITEMS_PER_RUN = '15',
 } = process.env;
 
 const STATE_FILE = path.join(__dirname, 'state.json');
@@ -94,18 +94,19 @@ function sleep(ms) {
 }
 
 // Steam'in herkese açık, key gerektirmeyen fiyat+hacim endpoint'i.
-async function fetchSteamPrice(marketHashName, retry = true) {
+async function fetchSteamPrice(marketHashName, attempt = 0) {
   const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encodeURIComponent(
     marketHashName
   )}`;
   const res = await fetch(url);
   if (res.status === 429) {
-    if (retry) {
-      console.warn('Rate limit, 8sn bekleyip tekrar deneniyor:', marketHashName);
-      await sleep(8000);
-      return fetchSteamPrice(marketHashName, false);
+    if (attempt < 2) {
+      const wait = 10000 + attempt * 8000; // 10sn, sonra 18sn
+      console.warn(`Rate limit, ${wait / 1000}sn bekleyip tekrar deneniyor (deneme ${attempt + 1}):`, marketHashName);
+      await sleep(wait);
+      return fetchSteamPrice(marketHashName, attempt + 1);
     }
-    console.warn('Steam rate limit — bu item atlanıyor:', marketHashName);
+    console.warn('Steam rate limit — bu item atlanıyor (3 deneme sonrası):', marketHashName);
     return null;
   }
   if (!res.ok) return null;
@@ -147,7 +148,7 @@ async function scanOnce() {
 
     const steamData = await fetchSteamPrice(name);
     checked++;
-    await sleep(2000);
+    await sleep(4000);
 
     if (!steamData) continue;
     const { price: steamPrice, volume } = steamData;
