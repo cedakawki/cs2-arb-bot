@@ -1,18 +1,18 @@
 /**
- * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM
- * --------------------------------------------
- * - Steam Community Market'in HERKESE AÇIK, KEY GEREKTİRMEYEN fiyat API'sini kullanır
- *   (steamcommunity.com/market/priceoverview). Aynı endpoint hem fiyatı hem de
- *   son 24 saatteki satış hacmini (likidite göstergesi) verir.
- * - CSFloat'ın ücretsiz API key'i ile aktif buy_now listing'lerini çeker.
- * - markup% = (csfloat_price - steam_price) / steam_price * 100
- *   Negatif değer = CSFloat, Steam'den daha ucuz (senin "ROI -%10/-15" kriterin).
- *   Pozitif değer = CSFloat, Steam'den daha pahalı (senin "en fazla %7-8 şişen" kriterin).
- * - MIN_VOLUME ile Steam'de günde en az X kere satılmayan (likit olmayan) itemler elenir.
+ * CS2 Arbitraj Tarayıcı Bot — ÜCRETSİZ SÜRÜM (v2 — Steam rate limit sorunu çözüldü)
+ * -----------------------------------------------------------------------------
+ * ÖNEMLİ KEŞİF: CSFloat'ın kendi API'si, her listing için Steam Community Market
+ * fiyatını ve hacmini zaten "item.scm.price" / "item.scm.volume" alanlarında veriyor.
+ * Bu yüzden artık Steam'e AYRI istek atmıyoruz — rate limit sorunu tamamen bitti,
+ * tarama çok daha hızlı ve güvenilir.
+ *
+ * - sort_by=highest_discount: CSFloat'ın kendi hesapladığı, Steam'e göre en çok
+ *   indirimli item'leri en üstte getirir — tam olarak aradığımız "ucuz kalmış" itemler.
+ * - markup% = (csfloat_price - scm_price) / scm_price * 100
+ *   Negatif değer = CSFloat, Steam'den daha ucuz (ROI kriterin).
+ * - MIN_VOLUME ile Steam'de az satılan (likit olmayan) itemler elenir.
  * - GitHub Actions üzerinde zamanlanmış (cron) olarak, HER SEFERİNDE BİR KERE
- *   çalışıp kapanacak şekilde tasarlandı (sürekli açık sunucu YOK, tamamen ücretsiz).
- * - Aynı fırsatı tekrar tekrar bildirmemek için state.json dosyasına
- *   son görülen listing id'lerini yazar; workflow bu dosyayı repo'ya geri commit'ler.
+ *   çalışıp kapanacak şekilde tasarlandı.
  *
  * ÖNEMLİ: Bu script SADECE TARAR ve Telegram'a bildirim atar.
  * Otomatik alım/satım YAPMAZ.
@@ -26,11 +26,11 @@ const {
   CSFLOAT_API_KEY,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID,
-  MIN_MARKUP_PCT = '-15',
-  MAX_MARKUP_PCT = '-10',
+  MIN_MARKUP_PCT = '-20',
+  MAX_MARKUP_PCT = '-5',
   MIN_STEAM_PRICE = '0.5',
   MIN_VOLUME = '20',
-  MAX_ITEMS_PER_RUN = '15',
+  MAX_ITEMS_PER_RUN = '50',
 } = process.env;
 
 const STATE_FILE = path.join(__dirname, 'state.json');
@@ -78,7 +78,7 @@ async function tgSend(text) {
 
 async function fetchCsfloatListings() {
   const minPriceCents = Math.round(parseFloat(MIN_STEAM_PRICE || '0.5') * 100);
-  const url = `https://csfloat.com/api/v1/listings?sort_by=lowest_price&limit=50&min_price=${minPriceCents}`;
+  const url = `https://csfloat.com/api/v1/listings?sort_by=highest_discount&limit=50&min_price=${minPriceCents}`;
   const res = await fetch(url, {
     headers: { Authorization: CSFLOAT_API_KEY },
   });
@@ -87,35 +87,6 @@ async function fetchCsfloatListings() {
   }
   const data = await res.json();
   return Array.isArray(data) ? data : data.data || [];
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-// Steam'in herkese açık, key gerektirmeyen fiyat+hacim endpoint'i.
-async function fetchSteamPrice(marketHashName, attempt = 0) {
-  const url = `https://steamcommunity.com/market/priceoverview/?appid=730&currency=1&market_hash_name=${encodeURIComponent(
-    marketHashName
-  )}`;
-  const res = await fetch(url);
-  if (res.status === 429) {
-    if (attempt < 2) {
-      const wait = 10000 + attempt * 8000; // 10sn, sonra 18sn
-      console.warn(`Rate limit, ${wait / 1000}sn bekleyip tekrar deneniyor (deneme ${attempt + 1}):`, marketHashName);
-      await sleep(wait);
-      return fetchSteamPrice(marketHashName, attempt + 1);
-    }
-    console.warn('Steam rate limit — bu item atlanıyor (3 deneme sonrası):', marketHashName);
-    return null;
-  }
-  if (!res.ok) return null;
-  const data = await res.json();
-  if (!data.success || !data.lowest_price) return null;
-  const price = parseFloat(data.lowest_price.replace(/[^0-9.,]/g, '').replace(',', '.'));
-  const volume = data.volume ? parseInt(String(data.volume).replace(/,/g, ''), 10) : 0;
-  if (isNaN(price)) return null;
-  return { price, volume: isNaN(volume) ? 0 : volume };
 }
 
 async function scanOnce() {
@@ -132,15 +103,15 @@ async function scanOnce() {
   const maxItems = parseInt(MAX_ITEMS_PER_RUN, 10);
 
   const listings = await fetchCsfloatListings();
-  console.log(`${listings.length} CSFloat listing çekildi.`);
+  console.log(`${listings.length} CSFloat listing çekildi (Steam verisi dahil, ekstra istek yok).`);
 
   let checked = 0;
   let hits = 0;
-  let rateLimited = 0;
-  const priceCache = new Map(); // aynı item ismi için Steam'e tekrar sormamak için
+  let noScmData = 0;
 
   for (const listing of listings) {
     if (checked >= maxItems) break;
+    checked++;
 
     const name = listing.item?.market_hash_name;
     if (!name) continue;
@@ -148,22 +119,15 @@ async function scanOnce() {
     const key = `${name}-${listing.id}`;
     if (seenSet.has(key)) continue;
 
-    let steamData;
-    if (priceCache.has(name)) {
-      steamData = priceCache.get(name);
-    } else {
-      steamData = await fetchSteamPrice(name);
-      priceCache.set(name, steamData);
-      checked++;
-      await sleep(4000);
-    }
-
-    if (!steamData) {
-      console.log(`  ${name} | Steam verisi alınamadı (rate limit/hata)`);
-      rateLimited++;
+    const scm = listing.item?.scm;
+    if (!scm || !scm.price) {
+      noScmData++;
+      console.log(`  ${name} | Steam (scm) verisi yok, atlanıyor`);
       continue;
     }
-    const { price: steamPrice, volume } = steamData;
+
+    const steamPrice = scm.price / 100;
+    const volume = scm.volume || 0;
 
     if (steamPrice < minSteamPrice) {
       console.log(`  ${name} | Steam $${steamPrice.toFixed(2)} < $${minSteamPrice} eşiği, ELENDİ (fiyat)`);
@@ -199,7 +163,7 @@ async function scanOnce() {
   state.seen = Array.from(seenSet);
   saveState(state);
 
-  console.log(`Tarama bitti. ${checked} item kontrol edildi, ${rateLimited} rate limit'e takıldı, ${hits} yeni fırsat bulundu.`);
+  console.log(`Tarama bitti. ${checked} item kontrol edildi, ${noScmData} veri eksikti, ${hits} yeni fırsat bulundu.`);
 }
 
 scanOnce().catch(async (e) => {
